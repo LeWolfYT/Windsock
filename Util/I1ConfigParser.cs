@@ -158,83 +158,51 @@ namespace Windsock
 
             foreach (Node statement in root.NamedChildren)
             {
-                if (statement.Type == "assignment" && statement.GetChildForField("left")?.Text == "d")
+                if (statement.Type == "assignment")
                 {
-                    pendingMap = null;
+                    Node? target = statement.GetChildForField("left");
                     Node? value = statement.GetChildForField("right");
-                    Node? function = value?.GetChildForField("function");
-                    if (value?.Type != "call" || function?.Type != "attribute" || function.GetChildForField("object")?.Text != "twc" || function.GetChildForField("attribute")?.Text != "Data")
+                    if (target?.Text == "d")
                     {
-                        continue;
-                    }
-
-                    Node? argumentList = value.GetChildForField("arguments");
-                    if (argumentList == null)
-                    {
-                        continue;
-                    }
-
-                    I1Map map = new();
-                    foreach (Node argument in argumentList.NamedChildren)
-                    {
-                        if (argument.Type != "keyword_argument")
+                        pendingMap = null;
+                        Node? function = value?.GetChildForField("function");
+                        if (value?.Type != "call" || function?.Type != "attribute" || function.GetChildForField("object")?.Text != "twc" || function.GetChildForField("attribute")?.Text != "Data")
                         {
                             continue;
                         }
 
-                        Node? name = argument.GetChildForField("name");
-                        Node? fieldValue = argument.GetChildForField("value");
-                        if (name == null || fieldValue == null)
+                        pendingMap = new I1Map();
+                        IReadOnlyList<Node>? arguments = value.GetChildForField("arguments")?.NamedChildren;
+                        if (arguments != null)
                         {
-                            continue;
-                        }
+                            foreach (Node argument in arguments)
+                            {
+                                if (argument.Type != "keyword_argument")
+                                {
+                                    continue;
+                                }
 
-                        switch (name.Text.ToLowerInvariant())
-                        {
-                            case "mapname":
-                                map.MapName = ReadPythonString(fieldValue.Text);
-                                break;
-                            case "mapcutcoordinate":
-                                map.MapcutCoordinate = ReadIntTuple(fieldValue);
-                                break;
-                            case "mapcutsize":
-                                map.MapcutSize = ReadIntTuple(fieldValue);
-                                break;
-                            case "mapfinalsize":
-                                map.MapFinalSize = ReadIntTuple(fieldValue);
-                                break;
-                            case "mapmilessize":
-                                map.MapMilesSize = ReadIntTuple(fieldValue);
-                                break;
-                            case "datacuttype":
-                                map.DatacutType = ReadPythonString(fieldValue.Text);
-                                break;
-                            case "datacutcoordinate":
-                                map.DatacutCoordinate = ReadIntTuple(fieldValue);
-                                break;
-                            case "datacutsize":
-                                map.DatacutSize = ReadIntTuple(fieldValue);
-                                break;
-                            case "datafinalsize":
-                                map.DataFinalSize = ReadIntTuple(fieldValue);
-                                break;
-                            case "dataoffset":
-                                map.DataOffset = ReadIntTuple(fieldValue);
-                                break;
-                            case "vectors":
-                                map.Vectors = ReadListValues(fieldValue);
-                                break;
+                                Node? name = argument.GetChildForField("name");
+                                Node? fieldValue = argument.GetChildForField("value");
+                                if (name != null && fieldValue != null)
+                                {
+                                    ReadMapField(pendingMap, name.Text, fieldValue);
+                                }
+                            }
                         }
                     }
-
-                    if (map.MapName != null)
+                    else if (pendingMap != null && target?.Type == "attribute" && target.GetChildForField("object")?.Text == "d" && value != null)
                     {
-                        pendingMap = map;
+                        Node? name = target.GetChildForField("attribute");
+                        if (name != null)
+                        {
+                            ReadMapField(pendingMap, name.Text, value);
+                        }
                     }
                     continue;
                 }
 
-                if (pendingMap == null || statement.Type != "call")
+                if (pendingMap?.MapName == null || statement.Type != "call")
                 {
                     continue;
                 }
@@ -245,21 +213,79 @@ namespace Windsock
                     continue;
                 }
 
-                Node? mapArguments = statement.GetChildForField("arguments");
-                IReadOnlyList<Node>? arguments = mapArguments?.NamedChildren;
-                if (arguments == null || arguments.Count < 2 || arguments[1].Text.Trim() != "d")
+                IReadOnlyList<Node>? mapArguments = statement.GetChildForField("arguments")?.NamedChildren;
+                if (mapArguments == null || mapArguments.Count < 2 || mapArguments[1].Text.Trim() != "d")
                 {
                     continue;
                 }
 
-                string configKey = ReadPythonString(arguments[0].Text);
-                pendingMap.Name = configKey;
-                pendingMap.ConfigKey = configKey;
-                maps[pendingMap.Name] = pendingMap;
-                pendingMap = null;
+                string configKey = ReadPythonString(mapArguments[0].Text);
+                // A single Data object can be registered for several products. Snapshot
+                // each registration so later assignments do not change earlier cuts.
+                maps[configKey] = CopyMap(pendingMap, configKey);
             }
 
             return maps;
+        }
+
+        private static void ReadMapField(I1Map map, string name, Node value)
+        {
+            switch (name.ToLowerInvariant())
+            {
+                case "mapname":
+                    map.MapName = ReadPythonString(value.Text);
+                    break;
+                case "mapcutcoordinate":
+                    map.MapcutCoordinate = ReadIntTuple(value);
+                    break;
+                case "mapcutsize":
+                    map.MapcutSize = ReadIntTuple(value);
+                    break;
+                case "mapfinalsize":
+                    map.MapFinalSize = ReadIntTuple(value);
+                    break;
+                case "mapmilessize":
+                    map.MapMilesSize = ReadIntTuple(value);
+                    break;
+                case "datacuttype":
+                    map.DatacutType = ReadPythonString(value.Text);
+                    break;
+                case "datacutcoordinate":
+                    map.DatacutCoordinate = ReadIntTuple(value);
+                    break;
+                case "datacutsize":
+                    map.DatacutSize = ReadIntTuple(value);
+                    break;
+                case "datafinalsize":
+                    map.DataFinalSize = ReadIntTuple(value);
+                    break;
+                case "dataoffset":
+                    map.DataOffset = ReadIntTuple(value);
+                    break;
+                case "vectors":
+                    map.Vectors = ReadListValues(value);
+                    break;
+            }
+        }
+
+        private static I1Map CopyMap(I1Map map, string configKey)
+        {
+            return new I1Map
+            {
+                Name = configKey,
+                ConfigKey = configKey,
+                MapName = map.MapName,
+                MapcutCoordinate = map.MapcutCoordinate?.ToArray(),
+                MapcutSize = map.MapcutSize?.ToArray(),
+                MapFinalSize = map.MapFinalSize?.ToArray(),
+                MapMilesSize = map.MapMilesSize?.ToArray(),
+                DatacutType = map.DatacutType,
+                DatacutCoordinate = map.DatacutCoordinate?.ToArray(),
+                DatacutSize = map.DatacutSize?.ToArray(),
+                DataFinalSize = map.DataFinalSize?.ToArray(),
+                DataOffset = map.DataOffset?.ToArray(),
+                Vectors = map.Vectors.ToList()
+            };
         }
 
         private static int[]? ReadIntTuple(Node node)
